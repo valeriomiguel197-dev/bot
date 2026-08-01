@@ -4,8 +4,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# --- 1. CONFIGURACIÓN DE ROLES Y CANAL ---
+# --- 1. CONFIGURACIÓN DE ROLES, CANAL Y SERVIDOR ---
 CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
+ID_SERVIDOR = 1516144475494158480  # ID de tu servidor de Discord para sincronización instantánea
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
@@ -38,14 +39,17 @@ conn.close()
 # --- 3. INICIALIZACIÓN DEL BOT ---
 class MiBot(discord.Client):
     def __init__(self):
-        # NOTA: Activamos el intent de miembros para poder sincronizar a todos los usuarios del servidor
         intents = discord.Intents.default()
-        intents.members = True
+        intents.members = True  # Permiso para leer miembros
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
+        # Sincronización instantánea específica para tu servidor
+        guild = discord.Object(id=ID_SERVIDOR)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        print("✅ Comandos sincronizados instantáneamente con el servidor.")
 
 bot = MiBot()
 
@@ -65,14 +69,12 @@ async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member
         return None
 
     try:
-        # Remover únicamente otros roles de nivel
         for r_id in NIVELES_CONFIANZA.values():
             if r_id != nuevo_rol_id:
                 rol_antiguo = guild.get_role(r_id)
                 if rol_antiguo and rol_antiguo in usuario.roles:
                     await usuario.remove_roles(rol_antiguo)
 
-        # Asignar el nuevo rol si no lo tiene
         if nuevo_rol not in usuario.roles:
             await usuario.add_roles(nuevo_rol)
 
@@ -107,7 +109,6 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
     cur.execute("SELECT recomendaciones FROM usuarios WHERE user_id = ?", (user_id_int,))
     row = cur.fetchone()
 
-    # Si en la BD tiene menos que su rol actual de Discord, tomamos de base su rol actual
     nivel_actual_discord = 0
     for niv, r_id in NIVELES_CONFIANZA.items():
         rol_obj = interaction.guild.get_role(r_id)
@@ -116,7 +117,6 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
                 nivel_actual_discord = niv
 
     base_recom = row[0] if row else 0
-    # Si la BD tenía menos de lo que marca su rol de Discord, usamos el de Discord como base
     if nivel_actual_discord > base_recom:
         base_recom = nivel_actual_discord
 
@@ -146,7 +146,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
             f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
         )
 
-# --- 5. COMANDO ADMINISTRATIVO /sincronizar (SINCRONIZA A TODOS LOS USUARIOS) ---
+# --- 5. COMANDO ADMINISTRATIVO /sincronizar ---
 @bot.tree.command(name="sincronizar", description="[Admin] Sincroniza la base de datos con los roles actuales del servidor.")
 @app_commands.checks.has_permissions(administrator=True)
 async def sincronizar(interaction: discord.Interaction):
@@ -160,7 +160,6 @@ async def sincronizar(interaction: discord.Interaction):
         if miembro.bot:
             continue
         
-        # Buscar cuál es el nivel más alto que tiene en sus roles
         nivel_encontrado = 0
         for nivel, rol_id in NIVELES_CONFIANZA.items():
             rol = interaction.guild.get_role(rol_id)
@@ -201,3 +200,9 @@ async def setrecom(interaction: discord.Interaction, usuario: discord.Member, ca
     msg = f"✅ Se actualizaron las recomendaciones de {usuario.mention} a **{cantidad}**."
     if nuevo_rol:
         msg += f" Se le asignó el rol **{nuevo_rol.name}**."
+    
+    await interaction.followup.send(msg, ephemeral=True)
+
+# --- 7. EJECUCIÓN ---
+TOKEN = os.getenv("TOKEN")
+bot.run(TOKEN)
