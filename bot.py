@@ -16,9 +16,11 @@ NIVELES_CONFIANZA = {
     6: 1516144475494158480   # ID Rol Confiable (Nivel 6)
 }
 
-# --- 2. BASE DE DATOS LOCAL ---
+# --- 2. BASE DE DATOS LOCAL CON ALMACENAMIENTO PERSISTENTE ---
 def obtener_conexion():
-    return sqlite3.connect("confianza.db")
+    # Se crea la carpeta /app/data si no existe para conectar el Volumen Persistente de Railway
+    os.makedirs("/app/data", exist_ok=True)
+    return sqlite3.connect("/app/data/confianza.db")
 
 conn = obtener_conexion()
 cursor = conn.cursor()
@@ -31,10 +33,9 @@ cursor.execute('''
 conn.commit()
 conn.close()
 
-# --- 3. INICIALIZACIÓN DEL BOT (INTENTS ESTÁNDAR SIN FORMULARIO) ---
+# --- 3. INICIALIZACIÓN DEL BOT ---
 class MiBot(discord.Client):
     def __init__(self):
-        # Intents estándar para evitar formularios de verificación
         intents = discord.Intents.default()
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
