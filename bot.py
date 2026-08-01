@@ -1,9 +1,12 @@
+import os
+import sqlite3
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sqlite3
 
-# --- 1. CONFIGURACIÓN DE ROLES, CANAL Y TOKEN ---
+# --- 1. CONFIGURACIÓN DE ROLES Y CANAL ---
+CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
+
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
     2: 1518773940766380264,  # ID Rol Nivel 2
@@ -12,9 +15,6 @@ NIVELES_CONFIANZA = {
     5: 1518774106995032125,  # ID Rol Nivel 5
     6: 1516144475494158480   # ID Rol Confiable (Nivel 6)
 }
-
-CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
-TOKEN = "MTUzMjg5MTkyNDQ2ODU5NjkyNw.G2w5HL.ZEqlu5JONwOuNyAlj1Sab8Cig3V3cOUIy3mgXc"
 
 # --- 2. BASE DE DATOS LOCAL ---
 def obtener_conexion():
@@ -34,7 +34,10 @@ conn.close()
 # --- 3. INICIALIZACIÓN DEL BOT ---
 class MiBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        # Aseguramos los intents para los roles y miembros
+        intents = discord.Intents.default()
+        intents.members = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
@@ -50,7 +53,6 @@ async def on_ready():
 @bot.tree.command(name="recomendar", description="Entrega una recomendación de confianza a un usuario.")
 @app_commands.describe(usuario="Jugador al que vas a recomendar", razon="Motivo de la recomendación")
 async def recomendar(interaction: discord.Interaction, usuario: discord.Member, razon: str):
-    # 1. Bloqueo de respuesta inmediata para evitar ejecuciones dobles por lag
     await interaction.response.defer(ephemeral=True)
 
     if usuario.id == interaction.user.id:
@@ -66,7 +68,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
         await interaction.followup.send("⚠️ No se encontró el canal de recomendaciones configurado.", ephemeral=True)
         return
 
-    # 2. Operación de lectura y escritura limpia en SQLite
+    # Operación de lectura y escritura limpia en SQLite
     db = obtener_conexion()
     cur = db.cursor()
     
@@ -82,7 +84,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
     
     db.commit()
     db.close()
-    # Confirmación al usuario que ejecutó el comando
+
     await interaction.followup.send(f"✅ Recomendación enviada con éxito.", ephemeral=True)
 
     # Crear la tarjeta informativa
@@ -97,7 +99,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
 
     mensaje_enviado = await canal_destino.send(embed=embed)
 
-    # Lógica de subida de roles (sumando estrictamente de a 1)
+    # Lógica de subida de roles
     if total_recom in NIVELES_CONFIANZA:
         nuevo_rol_id = NIVELES_CONFIANZA[total_recom]
         nuevo_rol = interaction.guild.get_role(nuevo_rol_id)
@@ -121,13 +123,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
                 await canal_destino.send(
                     "⚠️ El bot no tiene permisos suficientes para modificar roles. Revisa la jerarquía de roles."
                 )
-import os
-import discord
-from discord.ext import commands
 
-# ... tu código de los comandos ...
-
-# Para leer la variable de Railway:
-TOKEN = os.getenv("TOKEN") 
+# --- 5. EJECUCIÓN (SIEMPRE AL FINAL) ---
+TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
-
