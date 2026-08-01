@@ -16,11 +16,13 @@ NIVELES_CONFIANZA = {
     6: 1516144475494158480   # ID Rol Confiable (Nivel 6)
 }
 
-# --- 2. BASE DE DATOS LOCAL CON ALMACENAMIENTO PERSISTENTE ---
+# --- 2. BASE DE DATOS LOCAL Y PERSISTENTE ---
+DB_DIR = "/app/data"
+DB_PATH = os.path.join(DB_DIR, "confianza.db")
+
 def obtener_conexion():
-    # Se crea la carpeta /app/data si no existe para conectar el Volumen Persistente de Railway
-    os.makedirs("/app/data", exist_ok=True)
-    return sqlite3.connect("/app/data/confianza.db")
+    os.makedirs(DB_DIR, exist_ok=True)
+    return sqlite3.connect(DB_PATH)
 
 conn = obtener_conexion()
 cursor = conn.cursor()
@@ -36,7 +38,9 @@ conn.close()
 # --- 3. INICIALIZACIÓN DEL BOT ---
 class MiBot(discord.Client):
     def __init__(self):
+        # NOTA: Activamos el intent de miembros para poder sincronizar a todos los usuarios del servidor
         intents = discord.Intents.default()
+        intents.members = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
@@ -49,7 +53,34 @@ bot = MiBot()
 async def on_ready():
     print(f"Bot conectado y listo como: {bot.user.name}")
 
-# --- 4. COMANDO /recomendar SEGURO Y ANTI-DUPLICADOS ---
+# Auxiliar de asignación de roles
+async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
+    if total_recom not in NIVELES_CONFIANZA:
+        return None
+
+    nuevo_rol_id = NIVELES_CONFIANZA[total_recom]
+    nuevo_rol = guild.get_role(nuevo_rol_id)
+
+    if not nuevo_rol:
+        return None
+
+    try:
+        # Remover únicamente otros roles de nivel
+        for r_id in NIVELES_CONFIANZA.values():
+            if r_id != nuevo_rol_id:
+                rol_antiguo = guild.get_role(r_id)
+                if rol_antiguo and rol_antiguo in usuario.roles:
+                    await usuario.remove_roles(rol_antiguo)
+
+        # Asignar el nuevo rol si no lo tiene
+        if nuevo_rol not in usuario.roles:
+            await usuario.add_roles(nuevo_rol)
+
+        return nuevo_rol
+    except discord.Forbidden:
+        return None
+
+# --- 4. COMANDO /recomendar ---
 @bot.tree.command(name="recomendar", description="Entrega una recomendación de confianza a un usuario.")
 @app_commands.describe(usuario="Jugador al que vas a recomendar", razon="Motivo de la recomendación")
 async def recomendar(interaction: discord.Interaction, usuario: discord.Member, razon: str):
@@ -68,26 +99,35 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
         await interaction.followup.send("⚠️ No se encontró el canal de recomendaciones configurado.", ephemeral=True)
         return
 
-    # Operación de lectura y escritura limpia en SQLite
+    user_id_int = int(usuario.id)
+
     db = obtener_conexion()
     cur = db.cursor()
     
-    cur.execute("SELECT recomendaciones FROM usuarios WHERE user_id = ?", (usuario.id,))
+    cur.execute("SELECT recomendaciones FROM usuarios WHERE user_id = ?", (user_id_int,))
     row = cur.fetchone()
 
-    if row is None:
-        total_recom = 1
-        cur.execute("INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?)", (usuario.id, 1))
-    else:
-        total_recom = row[0] + 1
-        cur.execute("UPDATE usuarios SET recomendaciones = ? WHERE user_id = ?", (total_recom, usuario.id))
-    
+    # Si en la BD tiene menos que su rol actual de Discord, tomamos de base su rol actual
+    nivel_actual_discord = 0
+    for niv, r_id in NIVELES_CONFIANZA.items():
+        rol_obj = interaction.guild.get_role(r_id)
+        if rol_obj and rol_obj in usuario.roles:
+            if niv > nivel_actual_discord:
+                nivel_actual_discord = niv
+
+    base_recom = row[0] if row else 0
+    # Si la BD tenía menos de lo que marca su rol de Discord, usamos el de Discord como base
+    if nivel_actual_discord > base_recom:
+        base_recom = nivel_actual_discord
+
+    total_recom = base_recom + 1
+
+    cur.execute("INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET recomendaciones = ?", (user_id_int, total_recom, total_recom))
     db.commit()
     db.close()
 
     await interaction.followup.send(f"✅ Recomendación enviada con éxito.", ephemeral=True)
 
-    # Crear la tarjeta informativa
     embed = discord.Embed(
         title="🤝 ¡Nueva Recomendación!",
         color=discord.Color.blue()
@@ -99,31 +139,65 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
 
     mensaje_enviado = await canal_destino.send(embed=embed)
 
-    # Lógica de subida de roles
-    if total_recom in NIVELES_CONFIANZA:
-        nuevo_rol_id = NIVELES_CONFIANZA[total_recom]
-        nuevo_rol = interaction.guild.get_role(nuevo_rol_id)
+    nuevo_rol = await actualizar_roles_usuario(interaction.guild, usuario, total_recom)
+    if nuevo_rol:
+        await mensaje_enviado.add_reaction("✅")
+        await canal_destino.send(
+            f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
+        )
 
-        if nuevo_rol:
-            try:
-                # Quitar roles anteriores
-                for rol_id in NIVELES_CONFIANZA.values():
-                    rol_antiguo = interaction.guild.get_role(rol_id)
-                    if rol_antiguo and rol_antiguo in usuario.roles:
-                        await usuario.remove_roles(rol_antiguo)
+# --- 5. COMANDO ADMINISTRATIVO /sincronizar (SINCRONIZA A TODOS LOS USUARIOS) ---
+@bot.tree.command(name="sincronizar", description="[Admin] Sincroniza la base de datos con los roles actuales del servidor.")
+@app_commands.checks.has_permissions(administrator=True)
+async def sincronizar(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
 
-                # Asignar nuevo rol
-                await usuario.add_roles(nuevo_rol)
-                await mensaje_enviado.add_reaction("✅")
+    db = obtener_conexion()
+    cur = db.cursor()
 
-                await canal_destino.send(
-                    f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
-                )
-            except discord.Forbidden:
-                await canal_destino.send(
-                    "⚠️ El bot no tiene permisos suficientes para modificar roles. Revisa la jerarquía de roles en tu servidor."
-                )
+    actualizados = 0
+    for miembro in interaction.guild.members:
+        if miembro.bot:
+            continue
+        
+        # Buscar cuál es el nivel más alto que tiene en sus roles
+        nivel_encontrado = 0
+        for nivel, rol_id in NIVELES_CONFIANZA.items():
+            rol = interaction.guild.get_role(rol_id)
+            if rol and rol in miembro.roles:
+                if nivel > nivel_encontrado:
+                    nivel_encontrado = nivel
 
-# --- 5. EJECUCIÓN (SIEMPRE AL FINAL) ---
-TOKEN = os.getenv("TOKEN")
-bot.run(TOKEN)
+        if nivel_encontrado > 0:
+            user_id_int = int(miembro.id)
+            cur.execute(
+                "INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET recomendaciones = ?",
+                (user_id_int, nivel_encontrado, nivel_encontrado)
+            )
+            actualizados += 1
+
+    db.commit()
+    db.close()
+
+    await interaction.followup.send(f"✅ ¡Sincronización completa! Se registraron las recomendaciones de **{actualizados}** usuarios según sus roles actuales.", ephemeral=True)
+
+# --- 6. COMANDO ADMINISTRATIVO /setrecom ---
+@bot.tree.command(name="setrecom", description="[Admin] Establece manualmente las recomendaciones de un usuario.")
+@app_commands.describe(usuario="Usuario a corregir", cantidad="Número exacto de recomendaciones")
+@app_commands.checks.has_permissions(administrator=True)
+async def setrecom(interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
+    await interaction.response.defer(ephemeral=True)
+
+    user_id_int = int(usuario.id)
+
+    db = obtener_conexion()
+    cur = db.cursor()
+    cur.execute("INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET recomendaciones = ?", (user_id_int, cantidad, cantidad))
+    db.commit()
+    db.close()
+
+    nuevo_rol = await actualizar_roles_usuario(interaction.guild, usuario, cantidad)
+
+    msg = f"✅ Se actualizaron las recomendaciones de {usuario.mention} a **{cantidad}**."
+    if nuevo_rol:
+        msg += f" Se le asignó el rol **{nuevo_rol.name}**."
