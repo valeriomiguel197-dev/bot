@@ -4,12 +4,11 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# --- 1. CONFIGURACIÓN DE ROLES, CANAL Y SERVIDOR ---
+# --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
 CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
-ID_SERVIDOR = 1516144475494158480  # ID de tu servidor de Discord
 
-# ⚠️ REEMPLAZÁ ESTE NÚMERO POR LA ID DEL ROL DE MODERADOR (O EL ROL QUE QUIERAS AUTORIZAR)
-ROL_MODERADOR_ID = 123456789012345678  
+# ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR (O EL ROL QUE QUIERAS AUTORIZAR A USAR /sincronizar Y /setrecom)
+ROL_MODERADOR_ID = 1516746824961097778 
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
@@ -43,23 +42,25 @@ conn.close()
 class MiBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
-        intents.members = True  # Lectura de miembros requerida
+        intents.members = True  # Para poder leer a los miembros al sincronizar
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        guild = discord.Object(id=ID_SERVIDOR)
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        print("✅ Comandos sincronizados instantáneamente con el servidor.")
+        # Sincronización segura: si Discord frena el sync, el bot NO crashea
+        try:
+            synced = await self.tree.sync()
+            print(f"✅ Se sincronizaron {len(synced)} comandos globalmente.")
+        except Exception as e:
+            print(f"⚠️ Nota de sincronización: {e}")
 
 bot = MiBot()
 
 @bot.event
 async def on_ready():
-    print(f"Bot conectado y listo como: {bot.user.name}")
+    print(f"🤖 Bot conectado exitosamente como: {bot.user.name}")
 
-# Auxiliar de asignación de roles
+# Auxiliar para actualizar roles
 async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
     if total_recom not in NIVELES_CONFIANZA:
         return None
@@ -148,11 +149,10 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
             f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
         )
 
-# --- 5. COMANDO /sincronizar (PERMITIDO A USUARIOS CON EL ROL INDICADO) ---
+# --- 5. COMANDO /sincronizar ---
 @bot.tree.command(name="sincronizar", description="Sincroniza la base de datos con los roles actuales del servidor.")
 async def sincronizar(interaction: discord.Interaction):
-    # Verificar si el usuario tiene el rol autorizado (o si es Administrador por seguridad)
-    tiene_rol = any(rol.id == 1516746824961097778 for rol in interaction.user.roles)
+    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
     if not tiene_rol and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
         return
@@ -187,11 +187,10 @@ async def sincronizar(interaction: discord.Interaction):
 
     await interaction.followup.send(f"✅ ¡Sincronización completa! Se registraron las recomendaciones de **{actualizados}** usuarios según sus roles actuales.", ephemeral=True)
 
-# --- 6. COMANDO /setrecom (PERMITIDO A USUARIOS CON EL ROL INDICADO) ---
+# --- 6. COMANDO /setrecom ---
 @bot.tree.command(name="setrecom", description="Establece manualmente las recomendaciones de un usuario.")
 @app_commands.describe(usuario="Usuario a corregir", cantidad="Número exacto de recomendaciones")
 async def setrecom(interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
-    # Verificar si el usuario tiene el rol autorizado (o si es Administrador)
     tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
     if not tiene_rol and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
