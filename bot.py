@@ -1,3 +1,4 @@
+Python
 import os
 import sqlite3
 import discord
@@ -31,12 +32,11 @@ cursor.execute('''
 conn.commit()
 conn.close()
 
-# --- 3. INICIALIZACIÓN DEL BOT ---
+# --- 3. INICIALIZACIÓN DEL BOT (INTENTS ESTÁNDAR SIN FORMULARIO) ---
 class MiBot(discord.Client):
     def __init__(self):
-        # Aseguramos los intents para los roles y miembros
+        # Intents estándar para evitar formularios de verificación
         intents = discord.Intents.default()
-        intents.members = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
@@ -121,7 +121,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
                 )
             except discord.Forbidden:
                 await canal_destino.send(
-                    "⚠️ El bot no tiene permisos suficientes para modificar roles. Revisa la jerarquía de roles."
+                    "⚠️ El bot no tiene permisos suficientes para modificar roles. Revisa la jerarquía de roles en tu servidor."
                 )
 
 # --- 5. EJECUCIÓN (SIEMPRE AL FINAL) ---
