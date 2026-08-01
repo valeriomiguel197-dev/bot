@@ -7,8 +7,8 @@ from discord import app_commands
 # --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
 CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
 
-# ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR (O EL ROL QUE QUIERAS AUTORIZAR A USAR /sincronizar Y /setrecom)
-ROL_MODERADOR_ID = 1516746824961097778 
+# ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR
+ROL_MODERADOR_ID =  1516746824961097778
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
@@ -38,16 +38,15 @@ cursor.execute('''
 conn.commit()
 conn.close()
 
-# --- 3. INICIALIZACIÓN DEL BOT ---
+# --- 3. INICIALIZACIÓN DEL BOT (INTENTS BÁSICOS, SIN PERMISOS ESPECIALES) ---
 class MiBot(discord.Client):
     def __init__(self):
+        # Usamos únicamente los intents por defecto de Discord
         intents = discord.Intents.default()
-        intents.members = True  # Para poder leer a los miembros al sincronizar
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Sincronización segura: si Discord frena el sync, el bot NO crashea
         try:
             synced = await self.tree.sync()
             print(f"✅ Se sincronizaron {len(synced)} comandos globalmente.")
@@ -58,7 +57,7 @@ bot = MiBot()
 
 @bot.event
 async def on_ready():
-    print(f"🤖 Bot conectado exitosamente como: {bot.user.name}")
+    print(f"🟢 ¡Bot ONLINE exitosamente como: {bot.user.name}!")
 
 # Auxiliar para actualizar roles
 async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
@@ -149,45 +148,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
             f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
         )
 
-# --- 5. COMANDO /sincronizar ---
-@bot.tree.command(name="sincronizar", description="Sincroniza la base de datos con los roles actuales del servidor.")
-async def sincronizar(interaction: discord.Interaction):
-    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
-    if not tiene_rol and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    db = obtener_conexion()
-    cur = db.cursor()
-
-    actualizados = 0
-    for miembro in interaction.guild.members:
-        if miembro.bot:
-            continue
-        
-        nivel_encontrado = 0
-        for nivel, rol_id in NIVELES_CONFIANZA.items():
-            rol = interaction.guild.get_role(rol_id)
-            if rol and rol in miembro.roles:
-                if nivel > nivel_encontrado:
-                    nivel_encontrado = nivel
-
-        if nivel_encontrado > 0:
-            user_id_int = int(miembro.id)
-            cur.execute(
-                "INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET recomendaciones = ?",
-                (user_id_int, nivel_encontrado, nivel_encontrado)
-            )
-            actualizados += 1
-
-    db.commit()
-    db.close()
-
-    await interaction.followup.send(f"✅ ¡Sincronización completa! Se registraron las recomendaciones de **{actualizados}** usuarios según sus roles actuales.", ephemeral=True)
-
-# --- 6. COMANDO /setrecom ---
+# --- 5. COMANDO /setrecom ---
 @bot.tree.command(name="setrecom", description="Establece manualmente las recomendaciones de un usuario.")
 @app_commands.describe(usuario="Usuario a corregir", cantidad="Número exacto de recomendaciones")
 async def setrecom(interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
@@ -214,6 +175,6 @@ async def setrecom(interaction: discord.Interaction, usuario: discord.Member, ca
     
     await interaction.followup.send(msg, ephemeral=True)
 
-# --- 7. EJECUCIÓN ---
+# --- 6. EJECUCIÓN ---
 TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
