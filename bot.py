@@ -8,7 +8,7 @@ from discord import app_commands
 CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
 
 # ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR
-ROL_MODERADOR_ID = 1516746824961097778  
+ROL_MODERADOR_ID = 1516746824961097778
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
@@ -16,7 +16,7 @@ NIVELES_CONFIANZA = {
     3: 1518774004784173066,  # ID Rol Nivel 3
     4: 1518774055229194486,  # ID Rol Nivel 4
     5: 1518774106995032125,  # ID Rol Nivel 5
-    6: 1516144475494158480   # ID Rol Confiable (Nivel 6)
+    6: 1516144475494158480   # ID Rol Confiable (Nivel 6 / Máximo)
 }
 
 # --- 2. BASE DE DATOS LOCAL Y PERSISTENTE ---
@@ -60,16 +60,23 @@ async def on_ready():
 
 # Auxiliar para actualizar roles según cantidad de recomendaciones
 async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
-    nuevo_rol_id = NIVELES_CONFIANZA.get(total_recom)
+    # Si tiene 6 o más recomendaciones, se le asigna/mantiene el nivel máximo (6 = Confiable)
+    nivel_efectivo = total_recom
+    if nivel_efectivo > 6:
+        nivel_efectivo = 6
+
+    nuevo_rol_id = NIVELES_CONFIANZA.get(nivel_efectivo)
     nuevo_rol = guild.get_role(nuevo_rol_id) if nuevo_rol_id else None
 
     try:
-        for r_id in NIVELES_CONFIANZA.values():
-            if r_id != nuevo_rol_id:
+        # Remover otros roles de nivel inferior que el usuario ya no deba tener
+        for niv, r_id in NIVELES_CONFIANZA.items():
+            if niv != nivel_efectivo:
                 rol_antiguo = guild.get_role(r_id)
                 if rol_antiguo and rol_antiguo in usuario.roles:
                     await usuario.remove_roles(rol_antiguo)
 
+        # Asignar el rol correspondiente si aún no lo tiene
         if nuevo_rol and nuevo_rol not in usuario.roles:
             await usuario.add_roles(nuevo_rol)
 
@@ -141,13 +148,13 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
     mensaje_enviado = await canal_destino.send(embed=embed)
 
     nuevo_rol = await actualizar_roles_usuario(interaction.guild, usuario, total_recom)
-    if nuevo_rol:
+    if nuevo_rol and total_recom <= 6:
         await mensaje_enviado.add_reaction("✅")
         await canal_destino.send(
             f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
         )
 
-# --- 5. COMANDO /deshacer (DESHACE LA ÚLTIMA RECOMENDACIÓN) ---
+# --- 5. COMANDO /deshacer ---
 @bot.tree.command(name="deshacer", description="Deshace la última recomendación recibida por un usuario.")
 @app_commands.describe(usuario="Usuario al que se le revertirá la recomendación")
 async def deshacer(interaction: discord.Interaction, usuario: discord.Member):
@@ -181,9 +188,7 @@ async def deshacer(interaction: discord.Interaction, usuario: discord.Member):
 
     msg = f"↩️ Se deshizo la última recomendación de {usuario.mention}.\n**Recomendaciones anteriores:** {total_actual} ➔ **Actuales:** {nuevo_total}."
     if nuevo_rol:
-        msg += f"\n🎭 Su rol fue ajustado a **{nuevo_rol.name}**."
-    else:
-        msg += "\n🎭 Se removieron los roles de nivel que ya no le corresponden."
+        msg += f"\n🎭 Su rol actual es **{nuevo_rol.name}**."
 
     await interaction.followup.send(msg, ephemeral=True)
 
@@ -223,7 +228,7 @@ async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member,
     if razon:
         msg += f"\n**Razón:** {razon}"
     if nuevo_rol:
-        msg += f"\n🎭 Su rol fue actualizado a **{nuevo_rol.name}**."
+        msg += f"\n🎭 Su rol actual es **{nuevo_rol.name}**."
 
     await interaction.followup.send(msg, ephemeral=True)
 
