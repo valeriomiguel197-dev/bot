@@ -8,8 +8,7 @@ from discord import app_commands
 CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
 
 # ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR
-ROL_MODERADOR_ID =  1516746824961097778
-
+ROL_MODERADOR_ID = 1516746824961097778  
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,  # ID Rol Nivel 1
@@ -61,25 +60,28 @@ async def on_ready():
 
 # Auxiliar para actualizar roles según cantidad de recomendaciones
 async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
-    # Si el nivel existe en la tabla, buscamos su rol correspondiente
     nuevo_rol_id = NIVELES_CONFIANZA.get(total_recom)
     nuevo_rol = guild.get_role(nuevo_rol_id) if nuevo_rol_id else None
 
     try:
-        # Remover otros roles de confianza si ya no le corresponden
         for r_id in NIVELES_CONFIANZA.values():
             if r_id != nuevo_rol_id:
                 rol_antiguo = guild.get_role(r_id)
                 if rol_antiguo and rol_antiguo in usuario.roles:
                     await usuario.remove_roles(rol_antiguo)
 
-        # Asignar el nuevo rol si corresponde y no lo tiene
         if nuevo_rol and nuevo_rol not in usuario.roles:
             await usuario.add_roles(nuevo_rol)
 
         return nuevo_rol
     except discord.Forbidden:
         return None
+
+# Auxiliar para verificar si es Mod o Admin
+def es_mod_o_admin(interaction: discord.Interaction) -> bool:
+    es_admin = interaction.user.guild_permissions.administrator
+    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
+    return es_admin or tiene_rol
 
 # --- 4. COMANDO /recomendar ---
 @bot.tree.command(name="recomendar", description="Entrega una recomendación de confianza a un usuario.")
@@ -145,12 +147,11 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
             f"🎉 ¡{usuario.mention} ha subido de nivel! Ahora tiene el rol **{nuevo_rol.name}**."
         )
 
-# --- 5. COMANDO /quitarrecom (NUEVO: RESTA 1 RECOMENDACIÓN) ---
-@bot.tree.command(name="quitarrecom", description="Resta 1 recomendación a un usuario.")
-@app_commands.describe(usuario="Usuario al que se le quitará la recomendación", razon="Motivo del descuento")
-async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member, razon: str):
-    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
-    if not tiene_rol and not interaction.user.guild_permissions.administrator:
+# --- 5. COMANDO /deshacer (DESHACE LA ÚLTIMA RECOMENDACIÓN) ---
+@bot.tree.command(name="deshacer", description="Deshace la última recomendación recibida por un usuario.")
+@app_commands.describe(usuario="Usuario al que se le revertirá la recomendación")
+async def deshacer(interaction: discord.Interaction, usuario: discord.Member):
+    if not es_mod_o_admin(interaction):
         await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
         return
 
@@ -167,7 +168,7 @@ async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member,
 
     if total_actual <= 0:
         db.close()
-        await interaction.followup.send(f"⚠️ {usuario.mention} ya tiene 0 recomendaciones, no se le pueden restar más.", ephemeral=True)
+        await interaction.followup.send(f"⚠️ {usuario.mention} no tiene recomendaciones acumuladas para deshacer.", ephemeral=True)
         return
 
     nuevo_total = total_actual - 1
@@ -176,7 +177,46 @@ async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member,
     db.commit()
     db.close()
 
-    # Actualizar roles en Discord si bajó de nivel
+    nuevo_rol = await actualizar_roles_usuario(interaction.guild, usuario, nuevo_total)
+
+    msg = f"↩️ Se deshizo la última recomendación de {usuario.mention}.\n**Recomendaciones anteriores:** {total_actual} ➔ **Actuales:** {nuevo_total}."
+    if nuevo_rol:
+        msg += f"\n🎭 Su rol fue ajustado a **{nuevo_rol.name}**."
+    else:
+        msg += "\n🎭 Se removieron los roles de nivel que ya no le corresponden."
+
+    await interaction.followup.send(msg, ephemeral=True)
+
+# --- 6. COMANDO /quitarrecom ---
+@bot.tree.command(name="quitarrecom", description="Resta 1 recomendación a un usuario.")
+@app_commands.describe(usuario="Usuario al que se le quitará la recomendación", razon="Motivo del descuento")
+async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member, razon: str):
+    if not es_mod_o_admin(interaction):
+        await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    user_id_int = int(usuario.id)
+
+    db = obtener_conexion()
+    cur = db.cursor()
+    cur.execute("SELECT recomendaciones FROM usuarios WHERE user_id = ?", (user_id_int,))
+    row = cur.fetchone()
+
+    total_actual = row[0] if row else 0
+
+    if total_actual <= 0:
+        db.close()
+        await interaction.followup.send(f"⚠️ {usuario.mention} ya tiene 0 recomendaciones.", ephemeral=True)
+        return
+
+    nuevo_total = total_actual - 1
+
+    cur.execute("INSERT INTO usuarios (user_id, recomendaciones) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET recomendaciones = ?", (user_id_int, nuevo_total, nuevo_total))
+    db.commit()
+    db.close()
+
     nuevo_rol = await actualizar_roles_usuario(interaction.guild, usuario, nuevo_total)
 
     msg = f"📉 Se le restó 1 recomendación a {usuario.mention}. **Total actual:** {nuevo_total}."
@@ -187,12 +227,11 @@ async def quitarrecom(interaction: discord.Interaction, usuario: discord.Member,
 
     await interaction.followup.send(msg, ephemeral=True)
 
-# --- 6. COMANDO /setrecom ---
+# --- 7. COMANDO /setrecom ---
 @bot.tree.command(name="setrecom", description="Establece manualmente las recomendaciones de un usuario.")
 @app_commands.describe(usuario="Usuario a corregir", cantidad="Número exacto de recomendaciones")
 async def setrecom(interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
-    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
-    if not tiene_rol and not interaction.user.guild_permissions.administrator:
+    if not es_mod_o_admin(interaction):
         await interaction.response.send_message("❌ No tienes el rol necesario para usar este comando.", ephemeral=True)
         return
 
@@ -214,12 +253,6 @@ async def setrecom(interaction: discord.Interaction, usuario: discord.Member, ca
     
     await interaction.followup.send(msg, ephemeral=True)
 
-# --- 7. EJECUCIÓN ---
+# --- 8. EJECUCIÓN ---
 TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
-
-      
-
-
-
-  
