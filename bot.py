@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# --- SERVidor WEB MINI PARA MANTENER RENDER GRATIS ---
+# --- 0. SERVIDOR WEB MINI PARA MANTENER RENDER GRATIS ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -22,7 +22,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
 CANAL_RECOMENDACIONES_ID = 1517311566591168562
-ROL_MODERADOR_ID = 1516746824961097778 
+ROL_MODERADOR_ID =  1516746824961097778
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,
@@ -34,7 +34,8 @@ NIVELES_CONFIANZA = {
 }
 
 # --- 2. BASE DE DATOS LOCAL Y PERSISTENTE ---
-DB_DIR = "/app/data"
+# Corregido: Guarda la DB dentro del directorio del proyecto para evitar PermissionError en Render
+DB_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DB_DIR, "confianza.db")
 
 def obtener_conexion():
@@ -143,7 +144,7 @@ async def recomendar(interaction: discord.Interaction, usuario: discord.Member, 
     db.commit()
     db.close()
 
-    await interaction.followup.send(f"✅ Recomendación enviada con éxito.", ephemeral=True)
+    await interaction.followup.send("✅ Recomendación enviada con éxito.", ephemeral=True)
 
     embed = discord.Embed(
         title="🤝 ¡Nueva Recomendación!",
