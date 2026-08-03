@@ -22,7 +22,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
 CANAL_RECOMENDACIONES_ID = 1517311566591168562
-ROL_MODERADOR_ID =  1516746824961097778
+ROL_MODERADOR_ID = 1516746824961097778
 
 NIVELES_CONFIANZA = {
     1: 1518773836156244058,
@@ -34,7 +34,6 @@ NIVELES_CONFIANZA = {
 }
 
 # --- 2. BASE DE DATOS LOCAL Y PERSISTENTE ---
-# Corregido: Guarda la DB dentro del directorio del proyecto para evitar PermissionError en Render
 DB_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DB_DIR, "confianza.db")
 
@@ -69,6 +68,27 @@ class MiBot(discord.Client):
 
 bot = MiBot()
 
+# MANEJO DE ERRORES (Muestra el mensaje cuando el usuario está en cooldown)
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        minutos = int(error.retry_after // 60)
+        segundos = int(error.retry_after % 60)
+        
+        tiempo_texto = ""
+        if minutos > 0:
+            tiempo_texto += f"{minutos} min "
+        tiempo_texto += f"{segundos} seg"
+
+        msg = f"⏳ Debes esperar **{tiempo_texto}** antes de volver a usar este comando."
+        
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    else:
+        print(f"Error en comando: {error}")
+
 @bot.event
 async def on_ready():
     print(f"🟢 ¡Bot ONLINE exitosamente como: {bot.user.name}!")
@@ -100,9 +120,10 @@ def es_mod_o_admin(interaction: discord.Interaction) -> bool:
     tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
     return es_admin or tiene_rol
 
-# --- 4. COMANDO /recomendar ---
+# --- 4. COMANDO /recomendar (CON COOLDOWN DE 5 MINUTOS) ---
 @bot.tree.command(name="recomendar", description="Entrega una recomendación de confianza a un usuario.")
 @app_commands.describe(usuario="Jugador al que vas a recomendar", razon="Motivo de la recomendación")
+@app_commands.checks.cooldown(1, 300.0, key=lambda i: (i.guild_id, i.user.id)) # 1 uso cada 300 segundos (5 min) por usuario
 async def recomendar(interaction: discord.Interaction, usuario: discord.Member, razon: str):
     await interaction.response.defer(ephemeral=True)
 
