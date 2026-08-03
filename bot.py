@@ -1,22 +1,36 @@
 import os
 import sqlite3
+import threading
+from flask import Flask
 import discord
 from discord.ext import commands
 from discord import app_commands
 
-# --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
-CANAL_RECOMENDACIONES_ID = 1517311566591168562  # ID de tu canal de recomendaciones
+# --- SERVidor WEB MINI PARA MANTENER RENDER GRATIS ---
+app = Flask(__name__)
 
-# ⚠️ PONÉ ACÁ LA ID DEL ROL DE MODERADOR
-ROL_MODERADOR_ID = 1516746824961097778
+@app.route('/')
+def home():
+    return "¡Bot activo 24/7!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# Iniciar servidor web en un hilo secundario
+threading.Thread(target=run_web, daemon=True).start()
+
+# --- 1. CONFIGURACIÓN DE ROLES Y CANALES ---
+CANAL_RECOMENDACIONES_ID = 1517311566591168562
+ROL_MODERADOR_ID = 123456789012345678  
 
 NIVELES_CONFIANZA = {
-    1: 1518773836156244058,  # ID Rol Nivel 1
-    2: 1518773940766380264,  # ID Rol Nivel 2
-    3: 1518774004784173066,  # ID Rol Nivel 3
-    4: 1518774055229194486,  # ID Rol Nivel 4
-    5: 1518774106995032125,  # ID Rol Nivel 5
-    6: 1516144475494158480   # ID Rol Confiable (Nivel 6 / Máximo)
+    1: 1518773836156244058,
+    2: 1518773940766380264,
+    3: 1518774004784173066,
+    4: 1518774055229194486,
+    5: 1518774106995032125,
+    6: 1516144475494158480
 }
 
 # --- 2. BASE DE DATOS LOCAL Y PERSISTENTE ---
@@ -58,9 +72,7 @@ bot = MiBot()
 async def on_ready():
     print(f"🟢 ¡Bot ONLINE exitosamente como: {bot.user.name}!")
 
-# Auxiliar para actualizar roles según cantidad de recomendaciones
 async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member, total_recom: int):
-    # Si tiene 6 o más recomendaciones, se le asigna/mantiene el nivel máximo (6 = Confiable)
     nivel_efectivo = total_recom
     if nivel_efectivo > 6:
         nivel_efectivo = 6
@@ -69,14 +81,12 @@ async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member
     nuevo_rol = guild.get_role(nuevo_rol_id) if nuevo_rol_id else None
 
     try:
-        # Remover otros roles de nivel inferior que el usuario ya no deba tener
         for niv, r_id in NIVELES_CONFIANZA.items():
             if niv != nivel_efectivo:
                 rol_antiguo = guild.get_role(r_id)
                 if rol_antiguo and rol_antiguo in usuario.roles:
                     await usuario.remove_roles(rol_antiguo)
 
-        # Asignar el rol correspondiente si aún no lo tiene
         if nuevo_rol and nuevo_rol not in usuario.roles:
             await usuario.add_roles(nuevo_rol)
 
@@ -84,7 +94,6 @@ async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member
     except discord.Forbidden:
         return None
 
-# Auxiliar para verificar si es Mod o Admin
 def es_mod_o_admin(interaction: discord.Interaction) -> bool:
     es_admin = interaction.user.guild_permissions.administrator
     tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
