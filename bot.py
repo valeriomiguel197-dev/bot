@@ -52,7 +52,7 @@ cursor.execute('''
 conn.commit()
 conn.close()
 
-# --- 3. INICIALIZACIÓN DEL BOT ---
+# --- 3. INICIALIZACIÓN DEL BOT Y FUNCIONES AUXILIARES ---
 class MiBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -68,7 +68,18 @@ class MiBot(discord.Client):
 
 bot = MiBot()
 
-# MANEJO DE ERRORES (Muestra el mensaje cuando el usuario está en cooldown)
+def es_mod_o_admin(interaction: discord.Interaction) -> bool:
+    es_admin = interaction.user.guild_permissions.administrator
+    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
+    return es_admin or tiene_rol
+
+# Función para aplicar cooldown a usuarios normales e ignorarlo en mods/admins
+def dynamic_cooldown(interaction: discord.Interaction):
+    if es_mod_o_admin(interaction):
+        return None  # No hay cooldown para mods/admins
+    return app_commands.Cooldown(1, 300.0) # 1 uso cada 300 segundos (5 min) para miembros comunes
+
+# MANEJO DE ERRORES DE COOLDOWN
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
@@ -115,15 +126,10 @@ async def actualizar_roles_usuario(guild: discord.Guild, usuario: discord.Member
     except discord.Forbidden:
         return None
 
-def es_mod_o_admin(interaction: discord.Interaction) -> bool:
-    es_admin = interaction.user.guild_permissions.administrator
-    tiene_rol = any(rol.id == ROL_MODERADOR_ID for rol in interaction.user.roles)
-    return es_admin or tiene_rol
-
-# --- 4. COMANDO /recomendar (CON COOLDOWN DE 5 MINUTOS) ---
+# --- 4. COMANDO /recomendar (CON COOLDOWN EXCLUSIVO PARA USUARIOS REGULARES) ---
 @bot.tree.command(name="recomendar", description="Entrega una recomendación de confianza a un usuario.")
 @app_commands.describe(usuario="Jugador al que vas a recomendar", razon="Motivo de la recomendación")
-@app_commands.checks.cooldown(1, 300.0, key=lambda i: (i.guild_id, i.user.id)) # 1 uso cada 300 segundos (5 min) por usuario
+@app_commands.checks.dynamic_cooldown(dynamic_cooldown)
 async def recomendar(interaction: discord.Interaction, usuario: discord.Member, razon: str):
     await interaction.response.defer(ephemeral=True)
 
